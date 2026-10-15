@@ -63,7 +63,7 @@ class SiglipVisionEmbeddings(nn.Module):
         
         patch_embds = self.patch_embeddings(pixel_values) # [Batch_size, Channels, Height, Width] -> [Batch_size, Embed_dim, num_patches(h), num_patches(w)]
         
-        embeddings = patch_embds.Flatten(2) # [Batch_size, Embed_dim, num_patches_h, num_patches_w] -> [Batch_size, Embed_dim, num_patches]
+        embeddings = patch_embds.flatten(2) # [Batch_size, Embed_dim, num_patches_h, num_patches_w] -> [Batch_size, Embed_dim, num_patches]
         
         embeddings = embeddings.transpose(1, 2) # [Batch_size, Embed_dim, num_patches] -> [Batch_size, num_patches, Embed_dim]
         
@@ -84,6 +84,50 @@ class SiglipMLP(nn.Module):
         hidden_states = self.fc2(hidden_states) # [Batch_size, Num_patches, int_dim] -> [Batch_size, Num_patches, Emb_dim]
         
         return hidden_states
+
+class SiglipAttention(nn.Module):
+    def __init__(self, config: SiglipVisionConfig):
+        super().__init__()
+        
+        self.embed_dim = config.hidden_size
+        self.num_heads = config.num_attention_heads
+        self.head_dim = self.embed_dim // self.num_heads
+        self.scale = (self.head_dim)**-0.5
+        self.dropout = config.attention_dropout
+        
+        self.q_proj = nn.Linear(self.embed_dim, self.embed_dim)
+        self.k_proj = nn.Linear(self.embed_dim, self.embed_dim)
+        self.v_proj = nn.Linear(self.embed_dim, self.embed_dim)
+        
+        self.out_proj = nn.Linear(self.embed_dim, self.embed_dim)
+    
+    def forward(self, hidden_states):
+        batch_size, seq_len, _ = hidden_states.size() # [Batch_size, Num_patches, Emb_dim]
+        
+        query_states = self.q_proj(hidden_states) # [Batch_size, Num_patches, Emb_dim]
+        key_states   = self.k_proj(hidden_states) # [Batch_size, Num_patches, Emb_dim]
+        value_states = self.v_proj(hidden_states) # [Batch_size, Num_patches, Emb_dim]
+        
+        query_states = query_states.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1,2) # [Batch_size, Num_heads, Num_patches, Head_dim]
+        key_states   = key_states.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1,2) # [Batch_size, Num_heads, Num_patches, Head_dim]
+        value_states = value_states.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1,2) # [Batch_size, Num_heads, Num_patches, Head_dim]
+        
+        # attn_wts = concat(softmax(Q @ K.T / sqrt(d_head)) @ V, dim=-1) @ O
+        
+        attn_wts = (query_states @ key_states.transpose(2,3)) * self.scale # [Batch_size, Num_heads, Num_patches, Num_patches]
+        attn_wts = nn.functional.softmax(attn_wts, dim=-1, dtype=torch.float32).to(query_states.dtype) # [Batch_size, Num_heads, Num_patches, Num_patches]
+        attn_wts = nn.functional.dropout(attn_wts, p=self.dropout, training=self.training) # [Batch_size, Num_heads, Num_patches, Num_patches]
+        
+        attn_op = attn_wts @ value_states # [Batch_size, Num_heads, Num_patches, Head_dim]
+        
+        attn_op = attn_op.transpose(1,2)  # [Batch_size, Num_patches, Num_heads, Head_dim]
+        attn_op = attn_op.view(batch_size, seq_len, -1) # [Batch_size, Num_patches, Emb_dim]
+        
+        attn_op = self.out_proj(attn_op) # [Batch_size, Num_patches, Emb_dim]
+        
+        return attn_op, attn_wts
+        
+        
 
 class SiglipEncoderLayer(nn.Module):
     def __init__(self, config: SiglipVisionConfig):
