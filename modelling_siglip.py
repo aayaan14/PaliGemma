@@ -125,9 +125,7 @@ class SiglipAttention(nn.Module):
         
         attn_op = self.out_proj(attn_op) # [Batch_size, Num_patches, Emb_dim]
         
-        return attn_op, attn_wts
-        
-        
+        return attn_op, attn_wts      
 
 class SiglipEncoderLayer(nn.Module):
     def __init__(self, config: SiglipVisionConfig):
@@ -154,6 +152,22 @@ class SiglipEncoderLayer(nn.Module):
         hidden_states = self.mlp(hidden_states) # [Batch_size, Num_patches, Emb_dim]
         
         hidden_states = residual + hidden_states # [Batch_size, Num_patches, Emb_dim]
+        
+        return hidden_states
+
+class SiglipEncoder(nn.Module):
+    def __init__(self, config: SiglipVisionConfig):
+        super().__init__()
+        
+        self.layers = nn.ModuleList(
+            [SiglipEncoderLayer(config) for _ in range(config.num_hidden_layers)]
+        )
+    
+    def forward(self, input_embs):
+        hidden_states = input_embs
+        
+        for encoder_layer in self.layers:
+            hidden_states = encoder_layer(hidden_states)
         
         return hidden_states
 
