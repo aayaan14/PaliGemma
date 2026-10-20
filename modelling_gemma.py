@@ -129,6 +129,46 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         # Zero out padding tokens
         final_embedding = torch.where(pad_mask_expanded, torch.zeros_like(final_embedding), final_embedding)
     
+    
+        ### CREATE THE ATTENTION MASK ###
+        
+        dtype, device = input_embeds.dtype, input_embeds.device
+        min_dtype = torch.finfo(dtype).min # -inf
+        q_len = input_embeds.shape[1]
+        
+        if kv_cache is None or kv_cache.num_items() == 0:
+            # Do not mask any token, coz we're in prefill phase(not masked in Gemma)
+            # Only works when we have no padding
+            causal_mask = torch.full(
+                (batch_size, q_len, q_len), fill_value=0, dtype=dtype, device=device
+            ) 
+            
+        else:
+            # Since we're generating tokens, the query must be one single token
+            assert q_len == 1
+            kv_len = kv_cache.num_items() + q_len
+            # Also in this case, we don't need to mask anything, since each query should be able to attend all previous tokens
+            causal_mask = torch.full(
+                (batch_size, q_len, kv_len), fill_value=0, dtype=dtype, device=device
+            )
+        
+        # Add the head dimension
+        # [Batch_size, Q_Len, KV_len] -> [Batch_size, Num_Heads_Q, Q_Len, KV_len]
+        causal_mask = causal_mask.unsqueeze(1)
+        
+        if kv_cache is not None and kv_cache.num_items() > 0:
+            # The position of the query is just the last position
+            position_ids = attention_mask.cumsum(-1)[:, -1]
+            if position_ids.dim() == 1:
+                position_ids = position_ids.unsqueeze(0)
+            
+        else:
+            # Create a position_ids based on the size of the attention_mask
+            # For masked tokens, use the number 1 as position.
+            position_ids = (attention_mask.cumsum(-1)).masked_fill_((attention_mask == 0), 1).to(device)
+
+        return final_embedding, causal_mask, position_ids
+        
     def forward(
         self,
         input_ids,
