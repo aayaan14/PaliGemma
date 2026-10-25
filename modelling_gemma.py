@@ -5,6 +5,9 @@ from torch.nn import CrossEntropyLoss
 import math
 from modelling_siglip import SiglipVisionModel, SiglipVisionConfig
 
+class KVCache():
+    pass
+
 class GemmaConfig():
     
     def __init__(
@@ -76,10 +79,17 @@ class GemmaForCausalLM(nn.Module):
     pass
 
 class PaliGemmaMultiModalProjector(nn.Module):
-    pass
+    def __init__(self, config: PaliGemmaConfig):
+        super().__init__()
+        
+        self.linear = nn.Linear(in_features=config.vision_config.hidden_size, out_features=config.projection_dim, bias=True)
+    
+    def forward(self, image_features):
+        # [Batch_Size, Num_Patches, Embed_Dim] -> [Batch_Size, Num_Patches, Projection_Dim]
+        hidden_states = self.linear(image_features)
+        return hidden_states
 
 class PaliGemmaForConditionalGeneration(nn.Module):
-    
     def __init__(self, config: PaliGemmaConfig):
         super().__init__()
         
