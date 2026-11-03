@@ -91,6 +91,44 @@ class GemmaRMSNorm(nn.Module):
         output = output * (1.0 + self.weight.float())
         return output.type_as(x)
 
+class GemmaDecoderLayer(nn.Module):
+    def __init__(self, config:GemmaConfig, layer_idx: int):
+        super().__init__()
+        
+        self.hidden_size = config.hidden_size
+        self.input_layernorm = nn.LayerNorm(self.hidden_size, config.rms_norm_eps)
+        self.self_attn = GemmaAttention(config=config, layer_idx=layer_idx)
+        self.post_attention_layernorm = nn.LayerNorm(self.hidden_size, config.rms_norm_eps)
+        self.mlp = GemmaMLP(config)
+        
+    def forward(
+        self,
+        hidden_states,
+        attention_mask,
+        position_ids,
+        kv_cache
+    ):
+        residual = hidden_states
+        hidden_states = self.input_layernorm(hidden_states) # [Batch_Size, Seq_Len, Hidden_Size]
+        
+        # [Batch_Size, Seq_Len, Hidden_Size]
+        hidden_states, _, = self.self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            kv_cache=kv_cache,
+        )
+        
+        hidden_states = residual + hidden_states # [Batch_Size, Seq_Len, Hidden_Size]
+        
+        residual = hidden_states # [Batch_Size, Seq_Len, Hidden_Size]
+        hidden_states = self.post_attention_layernorm(hidden_states) # [Batch_Size, Seq_Len, Hidden_Size]
+        
+        hidden_states = self.mlp(hidden_states) # [Batch_Size, Seq_Len, Hidden_Size]
+        hidden_states = residual + hidden_states # [Batch_Size, Seq_Len, Hidden_Size]
+        
+        return hidden_states
+
 class GemmaModel(nn.Module):
     def __init__(self, config:GemmaConfig):
         super().__init__()
