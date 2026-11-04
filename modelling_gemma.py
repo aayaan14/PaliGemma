@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from torch.nn import functional as F
 from typing import Optional, Tuple, List
 from torch.nn import CrossEntropyLoss
 import math
@@ -91,6 +92,29 @@ class GemmaRMSNorm(nn.Module):
         output = output * (1.0 + self.weight.float())
         return output.type_as(x)
 
+class GemmaMLP(nn.Module):
+    def __init__(self, config:GemmaConfig):
+        super().__init__()
+        
+        self.hidden_size = config.hidden_size
+        self.intermediate_size = config.intermediate_size
+        
+        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
+        
+    def forward(self, x):
+        y = self.gate_proj(x) # [Batch_Size, Seq_Len, Hidden_Size] -> [Batch_Size, Seq_Len, Int_Size]
+        y = F.gelu(y, approximate="tanh") # [Batch_Size, Seq_Len, Int_Size]
+
+        j = self.up_proj(x) # [Batch_Size, Seq_Len, Hidden_Size] -> [Batch_Size, Seq_Len, Int_Size]
+        
+        z = y * j # [Batch_Size, Seq_Len, Int_Size]
+        
+        z = self.down_proj(z) # [Batch_Size, Seq_Len, Int_Size] -> [Batch_Size, Seq_Len, Hidden_Size]
+        
+        return z
+        
 class GemmaDecoderLayer(nn.Module):
     def __init__(self, config:GemmaConfig, layer_idx: int):
         super().__init__()
